@@ -1,0 +1,164 @@
+/**
+ * @fileOverview Firestore Security Rules for JustiQ v3.
+ *
+ * Core Philosophy: Zero Trust by default.
+ * This ruleset enforces strict user ownership and read/write permissions based on role.
+ * Public data is explicitly marked as such. System-internal collections are locked down
+ * from client access entirely, intended for use by Cloud Functions only.
+ *
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Reusable helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      // In a real app, this would check for an admin claim or a role document.
+      // For now, we lock it down.
+      return false;
+    }
+
+    // ========== User Data Rules ==========
+    match /users/{userId} {
+      allow read, update, delete: if isOwner(userId);
+      allow create: if isOwner(userId) && request.resource.data.id == userId;
+      allow list: if false; // Never allow listing all users.
+
+      // Subscriptions are read-only for the owner. Written by backend.
+      match /subscriptions/{subId} {
+        allow read: if isOwner(userId);
+        allow write: if false; 
+      }
+    }
+    
+    // ========== Core Application Data ==========
+    match /legal_facts/{factId} {
+      allow get, list: if isSignedIn();
+      allow write: if isAdmin(); // Only admins can manage legal facts
+    }
+    
+    match /tools/{toolId} {
+        allow get, list: if true; // Tools definitions are public
+        allow write: if isAdmin();
+    }
+    
+    match /content/{contentId} {
+        allow get, list: if true; // Blog posts, case studies etc. are public
+        allow write: if isAdmin(); // Content managed by backend functions
+    }
+    
+    match /ratings/{ratingId} {
+        allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+        allow read, list, update, delete: if false; // Ratings are write-once and backend-analyzed
+    }
+    
+    match /referrals/{referralId} {
+        allow create: if isSignedIn(); // A user can create a referral
+        allow read, write: if false; // Managed and read by backend
+    }
+
+    match /localization/{countryCode} {
+        allow get, list: if true; // Localization data is public
+        allow write: if isAdmin();
+    }
+
+    // ========== Chat Rules ==========
+    match /chat_sessions/{sessionId} {
+      // The user is the owner if they are signed in and their UID matches the session's userId.
+      function isSessionOwner() {
+        return isSignedIn() && resource.data.userId == request.auth.uid;
+      }
+      
+      // Allow access if the session is owned by the user OR if the session is anonymous.
+      // An anonymous session has a null userId, and the request comes from an unauthenticated user.
+      allow read, update: if isSessionOwner() || (resource.data.userId == null && !isSignedIn());
+      
+      // Anyone can create a new chat session.
+      allow create: if true;
+      
+      match /messages/{messageId} {
+        function getParentSession() {
+          return get(/databases/$(database)/documents/chat_sessions/$(sessionId));
+        }
+
+        function isParentSessionOwner() {
+            let session = getParentSession();
+            return isSignedIn() && session.data.userId == request.auth.uid;
+        }
+
+        function isAnonymousParentSession() {
+            let session = getParentSession();
+            return session.data.userId == null && !isSignedIn();
+        }
+
+        // Allow creating/reading messages if you own the parent session (authed or anonymous).
+        allow read, list, create: if isParentSessionOwner() || isAnonymousParentSession();
+        // Messages are immutable once created.
+        allow update, delete: if false;
+      }
+    }
+
+    // ========== User-Generated Content Rules ==========
+    match /case_analysis/{analysisId} {
+      allow create, read, list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /contracts/{contractId} {
+      allow create, read, list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ========== Growth & System Automation (Backend Only) ==========
+    
+    match /growth_logs/{logId} {
+      allow read, write: if false; // Backend service only
+    }
+
+    match /kpiDaily/{date} {
+      allow read, write: if false;
+    }
+
+    match /referralEvents/{eventId} {
+      allow read, write: if false;
+    }
+    
+    match /newsletter_logs/{logId} {
+      allow read, write: if false; // Backend service only
+    }
+
+    match /system_health/{logId} {
+      allow read, write: if false; // Backend service only
+    }
+
+    match /ai_logs/{logId} {
+      allow read, write: if false; // Backend service only
+    }
+     match /cost_logs/{logId} {
+      allow read, write: if false; // Backend service only
+    }
+     match /learning_insights/{logId} {
+      allow read, write: if false; // Backend service only
+    }
+     match /market_intelligence/{weekId} {
+        allow read, write: if false; // Backend service only
+    }
+    
+    match /innovation/{ideaId} {
+      allow get, list: if isSignedIn(); // Users can see innovation ideas
+      allow create, update, delete: if isAdmin(); // Only admins/backend manage ideas
+    }
+
+    match /audit_trail/{logId} {
+      allow read, write: if false; // Backend service only
+    }
+  }
+}
