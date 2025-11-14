@@ -1,7 +1,3 @@
-Filnamn: package.json
-
-Kopiera allt innehåll i rutan nedan och klistra in det i ditt textprogram (Anteckningar/Notepad). Spara filen med namnet package.json (kom ihåg att välja "Alla filer" som filformat när du sparar).
-
 {
   "name": "nextn",
   "version": "0.1.0",
